@@ -7,13 +7,15 @@
 # RELEASE            :     v1.0.0
 # USAGE SYNTAX       :     .\Check-AD-Service-Account-Password-Expiration.ps1
 #
-# SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service accounts in Active Directory in order to monitor them via NRPE.
+# SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service in Active Directory in order to monitor them via NRPE.
 #
 #==========================================================================================
 
 #                 - RELEASE NOTES -
 # v1.0.0  2023.04.10 - Louis GAMBART - Initial version
 # v1.0.1  2023.04.12 - Louis GAMBART - Add SearchBase parameter to search in specific OU
+# v1.1.0  2023.04.12 - Louis GAMBART - Add exception list
+# v1.1.1  2023.04.12 - Louis GAMBART - Add a search pattern with the name of the account
 #
 #==========================================================================================
 
@@ -34,8 +36,16 @@ $error.clear()
 [int] $daysWarningExpiration = 60
 [int] $daysErrorExpiration = 30
 
-# Service users search base
+# active directory users
+[System.Collections.ArrayList] $errorServiceUsers = @()
+[System.Collections.ArrayList] $warningServiceUsers = @()
+
+# set the service user search pattern and OU
+[String] $serviceUsersSearchPattern = "SVC-*"
 [String] $serviceUsersOU = ""
+
+# execption list
+[System.Collections.ArrayList] $exceptionList = @("EXCEPTION1", "EXCEPTION2")
 
 
 ####################
@@ -177,10 +187,6 @@ function Get-Password-Expiration-Domain-Policy {
 [System.DateTime] $warningDate = (Get-Datetime).addDays(-($maxPasswordAge - $daysWarningExpiration -1))
 [System.DateTime] $errorDate = (Get-Datetime).addDays(-($maxPasswordAge - $daysErrorExpiration -1))
 
-# active directory users
-[System.Collections.ArrayList] $errorUsers = @()
-[System.Collections.ArrayList] $warningUsers = @()
-
 
 ########################
 #                      #
@@ -205,25 +211,30 @@ Write-Log "Starting script on $hostname at $(Get-Datetime)" 'Verbose'
 if (Find-Module -ModuleName 'ActiveDirectory') {
     try { Import-Module -Name 'ActiveDirectory' }
     catch { Write-Log "Unable to import the ActiveDirectory module: $_" 'Error' }
-    $warningUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
-    $errorUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
-    if ($errorUsers.Count -gt 0) {
-        Write-Host "ERROR: $errorUsers.Count", "users has the password expired in the last", $daysErrorExpiration, "days "
+
+    $warningServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
+    $errorServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
+
+    $warningServiceUsers = $warningServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+    $errorServiceUsers = $errorServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+
+    if ($errorServiceUsers.Count -gt 0) {
+        Write-Host "ERROR: $errorServiceUsers.Count", "users has the password expired in the last", $daysErrorExpiration, "days "
         Write-Host "<b>"
-        foreach ($errorUser in $errorUsers)
+        foreach ($errorUser in $errorServiceUsers)
         {
             Write-Host "\n $( $errorUser.SamAccountName ) ($( $errorUser.DaysUntilExpired ) days) "
         }
         Write-Host "\n\n WARNINGS </B>(from $daysErrorExpiration to $daysWarningExpiration days)<b>:</b>"
-        foreach ($warningUser in $warningUsers)
+        foreach ($warningUser in $warningServiceUsers)
         {
             Write-Host "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
         }
         exit 2
     } 
-    elseif ($warningUsers.Count -gt 0) {
-        Write-Host "WARNING: $warningUsers.Count", "users has the password expiring in the next", $daysWarningExpiration, "days "
-        foreach ($warningUser in $warningUsers)
+    elseif ($warningServiceUsers.Count -gt 0) {
+        Write-Host "WARNING: $warningServiceUsers.Count", "users has the password expiring in the next", $daysWarningExpiration, "days "
+        foreach ($warningUser in $warningServiceUsers)
         {
             Write-Host "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
         }
@@ -233,6 +244,7 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
         Write-Host "OK: No user has the password expiring in the next", $daysWarningExpiration, "days "
         exit 0
     }
+
 } else {
     Write-Log "The ActiveDirectory module is not installed" 'Error'
 }
