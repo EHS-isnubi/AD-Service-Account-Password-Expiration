@@ -13,6 +13,7 @@
 
 #                 - RELEASE NOTES -
 # v1.0.0  2023.04.10 - Louis GAMBART - Initial version
+# v1.0.1  2023.04.12 - Louis GAMBART - Add SearchBase parameter to search in specific OU
 #
 #==========================================================================================
 
@@ -32,6 +33,9 @@ $error.clear()
 # set warning and error expiration days
 [int] $daysWarningExpiration = 60
 [int] $daysErrorExpiration = 30
+
+# Service users search base
+[String] $serviceUsersOU = ""
 
 
 ####################
@@ -201,8 +205,8 @@ Write-Log "Starting script on $hostname at $(Get-Datetime)" 'Verbose'
 if (Find-Module -ModuleName 'ActiveDirectory') {
     try { Import-Module -Name 'ActiveDirectory' }
     catch { Write-Log "Unable to import the ActiveDirectory module: $_" 'Error' }
-    $warningUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
-    $errorUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
+    $warningUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
+    $errorUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
     if ($errorUsers.Count -gt 0) {
         Write-Host "ERROR: $errorUsers.Count", "users has the password expired in the last", $daysErrorExpiration, "days "
         Write-Host "<b>"
