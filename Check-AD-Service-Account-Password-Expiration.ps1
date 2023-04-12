@@ -4,7 +4,7 @@
 #
 # AUTHOR             :     Louis GAMBART
 # CREATION DATE      :     2023.04.10
-# RELEASE            :     v1.2.0
+# RELEASE            :     v1.3.0
 # USAGE SYNTAX       :     .\Check-AD-Service-Account-Password-Expiration.ps1
 #
 # SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service in Active Directory in order to monitor them via NRPE.
@@ -17,6 +17,7 @@
 # v1.1.0  2023.04.12 - Louis GAMBART - Add exception list
 # v1.1.1  2023.04.12 - Louis GAMBART - Add a search pattern with the name of the account
 # v1.2.0  2023.04.12 - Louis GAMBART - Use of fine-grained password policy to check the expiration date
+# v1.3.0  2023.04.12 - Louis GAMBART - Rework script output to be compatible with Centreon
 #
 #==========================================================================================
 
@@ -50,6 +51,9 @@ $error.clear()
 
 # password policy name
 [String] $passwordPolicyName = ""
+
+# centreon output string
+[String] $output = ""
 
 
 ####################
@@ -205,8 +209,8 @@ function Get-Password-Expiration-FGPP {
 
 # trap errors
 trap {
-    Write-Log "An error has occured: $_" 'Error'
-    exit 1
+    Write-Output "ERROR: An error has occured and the script can't run: $_"
+    exit 2
 }
 
 
@@ -226,31 +230,34 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
 
     $warningServiceUsers = $warningServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
     $errorServiceUsers = $errorServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+    
+    $output = ""
 
     if ($errorServiceUsers.Count -gt 0) {
-        Write-Host "ERROR: $errorServiceUsers.Count", "users has the password expired in the last", $daysErrorExpiration, "days "
-        Write-Host "<b>"
+        $output += "ERROR: $errorServiceUsers.Count", "users has the password expired in the last", $daysErrorExpiration, "days "
+        $output += "<b>"
         foreach ($errorUser in $errorServiceUsers)
         {
-            Write-Host "\n $( $errorUser.SamAccountName ) ($( $errorUser.DaysUntilExpired ) days) "
+            $output += "\n $( $errorUser.SamAccountName ) ($( $errorUser.DaysUntilExpired ) days) "
         }
-        Write-Host "\n\n WARNINGS </B>(from $daysErrorExpiration to $daysWarningExpiration days)<b>:</b>"
+        $output += "\n\n WARNINGS </B>(from $daysErrorExpiration to $daysWarningExpiration days)<b>:</b>"
         foreach ($warningUser in $warningServiceUsers)
         {
-            Write-Host "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
+            $output += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
         }
+        Write-Output $output
         exit 2
     } 
     elseif ($warningServiceUsers.Count -gt 0) {
-        Write-Host "WARNING: $warningServiceUsers.Count", "users has the password expiring in the next", $daysWarningExpiration, "days "
+        $output += "WARNING: $warningServiceUsers.Count", "users has the password expiring in the next", $daysWarningExpiration, "days "
         foreach ($warningUser in $warningServiceUsers)
         {
-            Write-Host "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
+            $output += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
         }
         exit 1
     }
     else {
-        Write-Host "OK: No user has the password expiring in the next", $daysWarningExpiration, "days "
+        $output += "OK: No user has the password expiring in the next", $daysWarningExpiration, "days "
         exit 0
     }
 
