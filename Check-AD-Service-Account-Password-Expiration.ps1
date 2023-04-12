@@ -4,7 +4,7 @@
 #
 # AUTHOR             :     Louis GAMBART
 # CREATION DATE      :     2023.04.10
-# RELEASE            :     v1.1.1
+# RELEASE            :     v1.2.0
 # USAGE SYNTAX       :     .\Check-AD-Service-Account-Password-Expiration.ps1
 #
 # SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service in Active Directory in order to monitor them via NRPE.
@@ -16,6 +16,7 @@
 # v1.0.1  2023.04.12 - Louis GAMBART - Add SearchBase parameter to search in specific OU
 # v1.1.0  2023.04.12 - Louis GAMBART - Add exception list
 # v1.1.1  2023.04.12 - Louis GAMBART - Add a search pattern with the name of the account
+# v1.2.0  2023.04.12 - Louis GAMBART - Use of fine-grained password policy to check the expiration date
 #
 #==========================================================================================
 
@@ -46,6 +47,9 @@ $error.clear()
 
 # execption list
 [System.Collections.ArrayList] $exceptionList = @("EXCEPTION1", "EXCEPTION2")
+
+# password policy name
+[String] $passwordPolicyName = ""
 
 
 ####################
@@ -151,27 +155,32 @@ function Find-Module {
 }
 
 
-function Get-Password-Expiration-Domain-Policy {
+function Get-Password-Expiration-FGPP {
     <#
     .SYNOPSIS
     Get the password expiration domain policy
     .DESCRIPTION
     Get the password expiration domain policy
     .INPUTS
-    None
+    FGPPName: The name of the password policy
     .OUTPUTS
     System.Int32: The password expiration domain policy
     .EXAMPLE
-    Get-Password-Expiration-Domain-Policy
+    Get-Password-Expiration-FGPP
     90
     #>
     [CmdletBinding()]
     [OutputType([System.Int32])]
-    param()
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [String] $FGPPName
+    )
     begin {}
     process {
-        return (Get-ADDefaultDomainPasswordPolicy).MaxPasswordAge.Days
+        return (Get-ADFineGrainedPasswordPolicy -Identity $FGPPName).MaxPasswordAge.Days
     }
+    end {}
 }
 
 
@@ -182,7 +191,7 @@ function Get-Password-Expiration-Domain-Policy {
 ######################
 
 # date&time parameters
-[System.Int32] $maxPasswordAge = Get-Password-Expiration-Domain-Policy
+[System.Int32] $maxPasswordAge = Get-Password-Expiration-FGPP -FGPPName $passwordPolicyName
 [System.DateTime] $expiredDate = (Get-Datetime).addDays(-$maxPasswordAge)
 [System.DateTime] $warningDate = (Get-Datetime).addDays(-($maxPasswordAge - $daysWarningExpiration -1))
 [System.DateTime] $errorDate = (Get-Datetime).addDays(-($maxPasswordAge - $daysErrorExpiration -1))
