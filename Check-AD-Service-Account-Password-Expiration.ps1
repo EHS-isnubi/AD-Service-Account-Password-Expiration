@@ -18,6 +18,8 @@
 # v1.1.1  2023.04.12 - Louis GAMBART - Add a search pattern with the name of the account
 # v1.2.0  2023.04.12 - Louis GAMBART - Use of fine-grained password policy to check the expiration date
 # v1.3.0  2023.04.12 - Louis GAMBART - Rework script output to be compatible with Centreon
+# v1.4.0  2023.05.04 - Louis GAMBART - Fix problem with Get-ADFineGrainedPasswordPolicy permission by adding manual password expiration
+# v1.4.1  2023.05.04 - Louis GAMBART - Add missing Write-Output for WARNING and OK Centreon status
 #
 #==========================================================================================
 
@@ -47,10 +49,14 @@ $error.clear()
 [String] $serviceUsersOU = ""
 
 # execption list
-[System.Collections.ArrayList] $exceptionList = @("EXCEPTION1", "EXCEPTION2")
+[System.Collections.ArrayList] $exceptionList = @()
+# @("SVC-EXCEPTION1", "SVC-EXCEPTION2")
 
-# password policy name
-[String] $passwordPolicyName = ""
+# password policy
+# [String] $passwordPolicyName = ""
+# In the case that you don't have the rights to read the fine-grained password policy, you can set the password expiration in days
+# In the case you can, you have to uncomment the string above and comment the line below and do the same in the function Get-Password-Expiration-FGPP
+[int] $PasswordPolicyExpiration = 365
 
 # centreon output string
 [String] $output = ""
@@ -180,9 +186,11 @@ function Get-Password-Expiration-FGPP {
         [ValidateNotNullOrEmpty()]
         [String] $FGPPName
     )
-    begin {}
+    begin {
+    }
     process {
-        return (Get-ADFineGrainedPasswordPolicy -Identity $FGPPName).MaxPasswordAge.Days
+        # return (Get-ADFineGrainedPasswordPolicy -Identity $FGPPName).MaxPasswordAge.Days
+        return $PasswordPolicyExpiration
     }
     end {}
 }
@@ -193,6 +201,10 @@ function Get-Password-Expiration-FGPP {
 #  III - PARAMETERS  #
 #                    #
 ######################
+
+if (($PasswordPolicyExpiration -ne $null) -and ($null -eq $passwordPolicyName)) {
+    $passwordPolicyName = "foo"
+}
 
 # date&time parameters
 [System.Int32] $maxPasswordAge = Get-Password-Expiration-FGPP -FGPPName $passwordPolicyName
@@ -228,8 +240,10 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
     $warningServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
     $errorServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
 
-    $warningServiceUsers = $warningServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
-    $errorServiceUsers = $errorServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+    if ($exceptionList.Count -ne "0") {
+        $warningServiceUsers = $warningServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+        $errorServiceUsers = $errorServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+    }
     
     $output = ""
 
@@ -254,10 +268,12 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
         {
             $output += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
         }
+        Write-Output $output
         exit 1
     }
     else {
         $output += "OK: No user has the password expiring in the next", $daysWarningExpiration, "days "
+        Write-Output $output
         exit 0
     }
 
