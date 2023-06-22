@@ -10,7 +10,6 @@
 # SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service in Active Directory in order to monitor them via NRPE.
 #
 #==========================================================================================
-
 #                 - RELEASE NOTES -
 # v1.0.0  2023.04.10 - Louis GAMBART - Initial version
 # v1.0.1  2023.04.12 - Louis GAMBART - Add SearchBase parameter to search in specific OU
@@ -20,6 +19,9 @@
 # v1.3.0  2023.04.12 - Louis GAMBART - Rework script output to be compatible with Centreon
 # v1.4.0  2023.05.04 - Louis GAMBART - Fix problem with Get-ADFineGrainedPasswordPolicy permission by adding manual password expiration
 # v1.4.1  2023.05.04 - Louis GAMBART - Add missing Write-Output for WARNING and OK Centreon status
+# v1.5.0  2023.06.22 - Louis GAMBART - Fix error in variable type
+# v1.5.1  2023.06.22 - Louis GAMBART - Fix error in the count of the number of days before expiration in output message
+# v1.5.2  2023.06.22 - Louis GAMBART - Fix status message of the output (original message was the start verbose message of the script)
 #
 #==========================================================================================
 
@@ -56,7 +58,7 @@ $error.clear()
 # [String] $passwordPolicyName = ""
 # In the case that you don't have the rights to read the fine-grained password policy, you can set the password expiration in days
 # In the case you can, you have to uncomment the string above and comment the line below and do the same in the function Get-Password-Expiration-FGPP
-[int] $PasswordPolicyExpiration = 365
+[Int32] $PasswordPolicyExpiration = 365
 
 # centreon output string
 [String] $output = ""
@@ -248,7 +250,7 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
     $output = ""
 
     if ($errorServiceUsers.Count -gt 0) {
-        $output += "ERROR: $errorServiceUsers.Count", "users has the password expired in the last", $daysErrorExpiration, "days "
+        $output += "ERROR: $($errorServiceUsers.Count)", "users has the password expired in the last", $daysErrorExpiration, "days "
         $output += "<b>"
         foreach ($errorUser in $errorServiceUsers)
         {
@@ -259,21 +261,21 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
         {
             $output += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
         }
-        Write-Output $output
+        Write-Output @("ERR, $($errorServiceUsers.Count) users has the password expired in the last $daysErrorExpiration days", $output)
         exit 2
     } 
     elseif ($warningServiceUsers.Count -gt 0) {
-        $output += "WARNING: $warningServiceUsers.Count", "users has the password expiring in the next", $daysWarningExpiration, "days "
+        $output += "WARNING: $($warningServiceUsers.Count)", "users has the password expiring in the next", $daysWarningExpiration, "days "
         foreach ($warningUser in $warningServiceUsers)
         {
             $output += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
         }
-        Write-Output $output
+        Write-Output @("WARN, $($warningServiceUsers.Count) users has the password expiring in the next $daysWarningExpiration days", $output)
         exit 1
     }
     else {
         $output += "OK: No user has the password expiring in the next", $daysWarningExpiration, "days "
-        Write-Output $output
+        Write-Output @("OK, No user has the password expiring in the next $daysWarningExpiration days", $output)
         exit 0
     }
 
