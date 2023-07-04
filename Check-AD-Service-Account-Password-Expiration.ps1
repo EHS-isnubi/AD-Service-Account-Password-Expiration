@@ -4,7 +4,7 @@
 #
 # AUTHOR             :     Louis GAMBART
 # CREATION DATE      :     2023.04.10
-# RELEASE            :     v1.5.5
+# RELEASE            :     v1.6.1
 # USAGE SYNTAX       :     .\Check-AD-Service-Account-Password-Expiration.ps1
 #
 # SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service in Active Directory in order to monitor them via NRPE.
@@ -25,6 +25,8 @@
 # v1.5.3  2023.06.22 - Louis GAMBART - Add a specific list of users to check
 # v1.5.4  2023.06.22 - Louis GAMBART - Fix status message of the output
 # v1.5.5  2023.07.01 - Louis GAMBART - Remove useless variable
+# v1.6.0  2023.07.04 - Louis GAMBART - Remove useless variable reinitialization
+# v1.6.1  2023.07.04 - Louis GAMBART - Add centreon output when AD module is not loadable
 #
 #==========================================================================================
 
@@ -262,11 +264,9 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
         $warningServiceUsers = $warningServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
         $errorServiceUsers = $errorServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
     }
-    
-    $output = ""
 
     if ($errorServiceUsers.Count -gt 0) {
-        $output += "ERROR: $($errorServiceUsers.Count)", "users has the password expired in the last", $daysErrorExpiration, "days "
+        $output += "CRITICAL: $($errorServiceUsers.Count)", "users has the password expired in the last", $daysErrorExpiration, "days "
         $output += "<b>\n"
         foreach ($errorUser in $errorServiceUsers)
         {
@@ -297,5 +297,7 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
     }
 
 } else {
-    Write-Log "The ActiveDirectory module is not installed" 'Error'
+    $output += "ERROR: Active Directory module is not installed"
+    Write-Output $output
+    exit 2
 }
