@@ -4,7 +4,7 @@
 #
 # AUTHOR             :     Louis GAMBART
 # CREATION DATE      :     2023.04.10
-# RELEASE            :     v1.6.1
+# RELEASE            :     v1.6.2
 # USAGE SYNTAX       :     .\Check-AD-Service-Account-Password-Expiration.ps1
 #
 # SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service in Active Directory in order to monitor them via NRPE.
@@ -27,6 +27,9 @@
 # v1.5.5  2023.07.01 - Louis GAMBART - Remove useless variable
 # v1.6.0  2023.07.04 - Louis GAMBART - Remove useless variable reinitialization
 # v1.6.1  2023.07.04 - Louis GAMBART - Add centreon output when AD module is not loadable
+# v1.6.2  2023.07.05 - Louis GAMBART - Change output message for script error (trap and AD module check) from error to unknown
+# v1.6.3  2023.07.05 - Louis GAMBART - Update try/catch to send centreon unknown status when AD module is not loadable
+# v1.6.4  2023.07.05 - Louis GAMBART - Remove useless functions
 #
 #==========================================================================================
 
@@ -77,69 +80,6 @@ $error.clear()
 #  II - FUNCTIONS  #
 #                  #
 ####################
-
-function Get-Datetime {
-    <#
-    .SYNOPSIS
-    Get the current date and time
-    .DESCRIPTION
-    Get the current date and time
-    .INPUTS
-    None
-    .OUTPUTS
-    System.DateTime: The current date and time
-    .EXAMPLE
-    Get-Datetime | Out-String
-    2022-10-24 10:00:00
-    #>
-    [CmdletBinding()]
-    [OutputType([System.DateTime])]
-    param()
-    begin {}
-    process { return [DateTime]::Now }
-    end {}
-}
-
-
-function Write-Log {
-    <#
-    .SYNOPSIS
-    Write log message in the console
-    .DESCRIPTION
-    Write log message in the console
-    .INPUTS
-    System.String: The message to write
-    System.String: The log level
-    .OUTPUTS
-    None
-    .EXAMPLE
-    Write-Log "Hello world" "Verbose"
-    VERBOSE: Hello world
-    #>
-    [CmdletBinding()]
-    [OutputType([void])]
-    param(
-        [Parameter(Mandatory = $true, Position = 0)]
-        [ValidateNotNullOrEmpty()]
-        [string]$Message,
-        [Parameter(Mandatory = $false, Position = 1)]
-        [ValidateSet('Error', 'Warning', 'Information', 'Verbose', 'Debug')]
-        [string]$LogLevel = 'Information'
-    )
-    begin {}
-    process {
-        switch ($LogLevel) {
-            'Error' { Write-Error $Message -ErrorAction Stop }
-            'Warning' { Write-Warning $Message -WarningAction Continue }
-            'Information' { Write-Information $Message -InformationAction Continue }
-            'Verbose' { Write-Verbose $Message -Verbose }
-            'Debug' { Write-Debug $Message -Debug Continue }
-            default { throw "Invalid log level: $_" }
-        }
-    }
-    end {}
-}
-
 
 function Find-Module {
     <#
@@ -231,8 +171,8 @@ if (($PasswordPolicyExpiration -ne $null) -and ($null -eq $passwordPolicyName)) 
 
 # trap errors
 trap {
-    Write-Output "ERROR: An error has occured and the script can't run: $_"
-    exit 2
+    Write-Output "UNKNOWN: An error has occured and the script can't run: $_"
+    exit 3
 }
 
 
@@ -244,7 +184,10 @@ trap {
 
 if (Find-Module -ModuleName 'ActiveDirectory') {
     try { Import-Module -Name 'ActiveDirectory' }
-    catch { Write-Log "Unable to import the ActiveDirectory module: $_" 'Error' }
+    catch {
+        $output += "UNKNOWN: Unable to import the ActiveDirectory module: $_"
+        exit 3
+    }
 
     $warningServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
     $errorServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
@@ -297,7 +240,7 @@ if (Find-Module -ModuleName 'ActiveDirectory') {
     }
 
 } else {
-    $output += "ERROR: Active Directory module is not installed"
+    $output += "UNKNOWN: Active Directory module is not installed"
     Write-Output $output
-    exit 2
+    exit 3
 }
