@@ -4,7 +4,7 @@
 #
 # AUTHOR             :     Louis GAMBART
 # CREATION DATE      :     2023.04.10
-# RELEASE            :     v1.6.2
+# RELEASE            :     v1.7.0
 # USAGE SYNTAX       :     .\Check-AD-Service-Account-Password-Expiration.ps1
 #
 # SCRIPT DESCRIPTION :     This script checks the expiration date of the password of the service in Active Directory in order to monitor them via NRPE.
@@ -30,6 +30,7 @@
 # v1.6.2  2023.07.05 - Louis GAMBART - Change output message for script error (trap and AD module check) from error to unknown
 # v1.6.3  2023.07.05 - Louis GAMBART - Update try/catch to send centreon unknown status when AD module is not loadable
 # v1.6.4  2023.07.05 - Louis GAMBART - Remove useless functions
+# v1.7.0  2023.07.09 - Louis GAMBART - Update Centreon output
 #
 #==========================================================================================
 
@@ -70,9 +71,6 @@ $error.clear()
 # In the case that you don't have the rights to read the fine-grained password policy, you can set the password expiration in days
 # In the case you can, you have to uncomment the string above and comment the line below and do the same in the function Get-Password-Expiration-FGPP
 [Int32] $PasswordPolicyExpiration = 365
-
-# centreon output string
-[String] $output = ""
 
 
 ####################
@@ -171,7 +169,8 @@ if (($PasswordPolicyExpiration -ne $null) -and ($null -eq $passwordPolicyName)) 
 
 # trap errors
 trap {
-    Write-Output "UNKNOWN: An error has occured and the script can't run: $_"
+    $outLog = @("UNKNOWN: An error has occured and the script can't run: $_")
+    Write-Output $outLog
     exit 3
 }
 
@@ -182,65 +181,59 @@ trap {
 #                        #
 ##########################
 
-if (Find-Module -ModuleName 'ActiveDirectory') {
-    try { Import-Module -Name 'ActiveDirectory' }
-    catch {
-        $output += "UNKNOWN: Unable to import the ActiveDirectory module: $_"
-        exit 3
-    }
-
-    $warningServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
-    $errorServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
-
-    if ($specificServiceUsers.Count -ne "0") {
-        foreach ($specificUser in $specificServiceUsers) {
-            $specificUser = Get-ADUser -Filter {(SamAccountName -eq $specificUser) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}}
-            if ($specificUser.PasswordLastSet -lt $warningDate -and $specificUser.PasswordLastSet -gt $errorDate) {
-                $warningServiceUsers.Add($specificUser)
-            } elseif ($specificUser.PasswordLastSet -lt $errorDate -and $specificUser.PasswordLastSet -gt $expiredDate) {
-                $errorServiceUsers.Add($specificUser)
-            }
-        }
-    }
-
-    if ($exceptionList.Count -ne "0") {
-        $warningServiceUsers = $warningServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
-        $errorServiceUsers = $errorServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
-    }
-
-    if ($errorServiceUsers.Count -gt 0) {
-        $output += "CRITICAL: $($errorServiceUsers.Count)", "users has the password expired in the last", $daysErrorExpiration, "days "
-        $output += "<b>\n"
-        foreach ($errorUser in $errorServiceUsers)
-        {
-            $output += "\n $( $errorUser.SamAccountName ) ($( $errorUser.DaysUntilExpired ) days) "
-        }
-        $output += "\n\n WARNINGS </B>(from $daysErrorExpiration to $daysWarningExpiration days)<b>:</b>"
-        foreach ($warningUser in $warningServiceUsers)
-        {
-            $output += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
-        }
-        Write-Output $output
-        exit 2
-    } 
-    elseif ($warningServiceUsers.Count -gt 0) {
-        $output += "WARNING: $($warningServiceUsers.Count)", "users has the password expiring in the next", $daysWarningExpiration, "days "
-        $output += "<b>\n"
-        foreach ($warningUser in $warningServiceUsers)
-        {
-            $output += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
-        }
-        Write-Output $output
-        exit 1
-    }
-    else {
-        $output += "OK: No user has the password expiring in the next", $daysWarningExpiration, "days "
-        Write-Output $output
-        exit 0
-    }
-
-} else {
-    $output += "UNKNOWN: Active Directory module is not installed"
-    Write-Output $output
+try { Import-Module -Name 'ActiveDirectory' }
+catch {
+    $outLog = @("UNKNOWN: Unable to import the ActiveDirectory module: $_")
+    Write-Output $outLog
     exit 3
+}
+
+$warningServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $warningDate) -and (PasswordLastSet -gt $errorDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
+$errorServiceUsers = Get-ADUser -Filter {(PasswordLastSet -lt $ErrorDate) -and (PasswordLastSet -gt $expiredDate) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true) -and (Name -like $serviceUsersSearchPattern)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}} | Sort-Object PasswordLastSet
+
+if ($specificServiceUsers.Count -ne "0") {
+    foreach ($specificUser in $specificServiceUsers) {
+        $specificUser = Get-ADUser -Filter {(SamAccountName -eq $specificUser) -and (PasswordNeverExpires -eq $false) -and (Enabled -eq $true)} -Properties PasswordNeverExpires, PasswordLastSet -SearchBase $serviceUsersOU | Select-Object SamAccountName, PasswordLastSet, @{name = "DaysUntilExpired"; Expression = {$_.PasswordLastSet - $ExpiredDate | Select-Object -ExpandProperty Days}}
+        if ($specificUser.PasswordLastSet -lt $warningDate -and $specificUser.PasswordLastSet -gt $errorDate) {
+            $warningServiceUsers.Add($specificUser)
+        } elseif ($specificUser.PasswordLastSet -lt $errorDate -and $specificUser.PasswordLastSet -gt $expiredDate) {
+            $errorServiceUsers.Add($specificUser)
+        }
+    }
+}
+
+if ($exceptionList.Count -ne "0") {
+    $warningServiceUsers = $warningServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+    $errorServiceUsers = $errorServiceUsers | Where-Object { $_.SamAccountName -notin $exceptionList }
+}
+
+if ($errorServiceUsers.Count -gt 0) {
+    $status += "CRITICAL: $($errorServiceUsers.Count)", "users has the password expired in the last", $daysErrorExpiration, "days "
+    foreach ($errorUser in $errorServiceUsers)
+    {
+        $outLog += "\n $( $errorUser.SamAccountName ) ($( $errorUser.DaysUntilExpired ) days) "
+    }
+    $outLog += "\n\n WARNINGS \n(from $daysErrorExpiration to $daysWarningExpiration days):\n\n"
+    foreach ($warningUser in $warningServiceUsers)
+    {
+        $outLog += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
+    }
+    $outLog = @($status, $outLog)
+    Write-Output $outLog
+    exit 2
+}
+elseif ($warningServiceUsers.Count -gt 0) {
+    $status += "WARNING: $($warningServiceUsers.Count)", "users has the password expiring in the next", $daysWarningExpiration, "days "
+    foreach ($warningUser in $warningServiceUsers)
+    {
+        $outLog += "\n $( $warningUser.SamAccountName ) ($( $warningUser.DaysUntilExpired ) days) "
+    }
+    $outLog = @($status, $outLog)
+    Write-Output $outLog
+    exit 1
+}
+else {
+    $outLog = @("OK: No user has the password expiring", "No user has the password expiring in the next", $daysWarningExpiration, "days")
+    Write-Output $outLog
+    exit 0
 }
